@@ -1,0 +1,24 @@
+{
+  "version": "rogii_v3_residual_calibrated",
+  "mode": "residual_model",
+  "models": [
+    "lightgbm",
+    "xgboost"
+  ],
+  "features": 85,
+  "train_rows_total": 5092255,
+  "target_rows_total": 3783989,
+  "fit_rows_for_calibration": 400000,
+  "calibration_rows": 220000,
+  "final_train_rows": 800000,
+  "baseline_validation_mae": 11.19375991821289,
+  "calibrated_validation_mae": 1.8192924118309004,
+  "alpha": 1.0,
+  "bias": -0.0013860179278708529,
+  "residual_clip": [
+    -47.75,
+    62.000048828125045
+  ],
+  "submission_rows": 14151,
+  "output_path": "submission.csv"
+}
