@@ -14,10 +14,10 @@ import pandas as pd
 
 TARGET = "TVT"
 SUB_TARGET = "tvt"
-VERSION = "rogii_v4_pf_spatial_calibrated"
+VERSION = "rogii_v4_pf_spatial_calibrated_optimized"
 FORMATIONS = ["ANCC", "ASTNU", "ASTNL", "EGFDU", "EGFDL", "BUDA"]
 COMMON_NUMERIC = ["MD", "X", "Y", "Z", "GR", "TVT_input"]
-TAIL_WINDOWS = [25, 50, 100, 300, 1000]
+TAIL_WINDOWS = [15, 30, 50, 100, 250, 500, 1000]
 
 
 try:
@@ -242,13 +242,13 @@ def gr_particle_tracker(
     n_particles: int = 128,
     n_seeds: int = 3,
     seed: int = 42,
-    sigma_scale: float = 5.0,
+    sigma_scale: float = 4.5,
 ) -> Tuple[np.ndarray, np.ndarray]:
     n = len(hw)
     tvt_input = pd.to_numeric(hw["TVT_input"], errors="coerce")
     known_mask = tvt_input.notna().to_numpy()
     eval_idx = np.flatnonzero(~known_mask)
-    full = interpolate_series(tvt_input).to_numpy(dtype=float)
+    full = interpolate_series(tvt_input).to_numpy(dtype=float).copy()
     std_full = np.zeros(n, dtype=float)
     if len(eval_idx) == 0 or known_mask.sum() < 20:
         return full, std_full
@@ -553,15 +553,15 @@ def make_model_candidates(seed: int = 42) -> List[Tuple[str, Any]]:
                 "lgbm_l1",
                 LGBMRegressor(
                     objective="regression_l1",
-                    n_estimators=1600,
-                    learning_rate=0.035,
-                    num_leaves=127,
-                    min_child_samples=50,
+                    n_estimators=1800,
+                    learning_rate=0.03,
+                    num_leaves=143,
+                    min_child_samples=60,
                     subsample=0.86,
                     subsample_freq=1,
                     colsample_bytree=0.86,
-                    reg_alpha=0.04,
-                    reg_lambda=0.35,
+                    reg_alpha=0.05,
+                    reg_lambda=0.40,
                     random_state=seed,
                     n_jobs=-1,
                     verbosity=-1,
@@ -573,15 +573,15 @@ def make_model_candidates(seed: int = 42) -> List[Tuple[str, Any]]:
                 "lgbm_l2",
                 LGBMRegressor(
                     objective="regression",
-                    n_estimators=1300,
-                    learning_rate=0.035,
-                    num_leaves=95,
-                    min_child_samples=80,
+                    n_estimators=1500,
+                    learning_rate=0.03,
+                    num_leaves=111,
+                    min_child_samples=70,
                     subsample=0.90,
                     subsample_freq=1,
                     colsample_bytree=0.80,
-                    reg_alpha=0.02,
-                    reg_lambda=0.55,
+                    reg_alpha=0.03,
+                    reg_lambda=0.60,
                     random_state=seed + 1,
                     n_jobs=-1,
                     verbosity=-1,
@@ -598,13 +598,13 @@ def make_model_candidates(seed: int = 42) -> List[Tuple[str, Any]]:
                 "xgb_abs",
                 XGBRegressor(
                     objective="reg:absoluteerror",
-                    n_estimators=900,
-                    learning_rate=0.035,
-                    max_depth=7,
+                    n_estimators=1100,
+                    learning_rate=0.03,
+                    max_depth=8,
                     subsample=0.86,
                     colsample_bytree=0.86,
-                    reg_alpha=0.03,
-                    reg_lambda=1.2,
+                    reg_alpha=0.05,
+                    reg_lambda=1.5,
                     tree_method="hist",
                     random_state=seed + 2,
                     n_jobs=-1,
@@ -621,10 +621,10 @@ def make_model_candidates(seed: int = 42) -> List[Tuple[str, Any]]:
                 "catboost",
                 CatBoostRegressor(
                     loss_function="RMSE",
-                    iterations=900,
-                    learning_rate=0.045,
-                    depth=8,
-                    l2_leaf_reg=6.0,
+                    iterations=1100,
+                    learning_rate=0.035,
+                    depth=7,
+                    l2_leaf_reg=5.0,
                     random_seed=seed + 3,
                     verbose=False,
                     allow_writing_files=False,
@@ -646,9 +646,9 @@ def make_model_candidates(seed: int = 42) -> List[Tuple[str, Any]]:
                 make_pipeline(
                     SimpleImputer(strategy="median"),
                     HistGradientBoostingRegressor(
-                        max_iter=650,
-                        learning_rate=0.045,
-                        max_leaf_nodes=31,
+                        max_iter=800,
+                        learning_rate=0.035,
+                        max_leaf_nodes=45,
                         l2_regularization=0.03,
                         random_state=seed,
                     ),
@@ -661,8 +661,8 @@ def make_model_candidates(seed: int = 42) -> List[Tuple[str, Any]]:
                 make_pipeline(
                     SimpleImputer(strategy="median"),
                     ExtraTreesRegressor(
-                        n_estimators=450,
-                        max_features=0.75,
+                        n_estimators=500,
+                        max_features=0.80,
                         min_samples_leaf=2,
                         n_jobs=-1,
                         random_state=seed + 4,
@@ -738,12 +738,13 @@ def calibrate_blend(val_df: pd.DataFrame, model_delta: np.ndarray) -> Dict[str, 
 
     best = {"w_model": 0.0, "w_pf": 0.0, "w_form": 0.0, "w_dense": 0.0, "bias": 0.0}
     best_rmse = report["baseline"]["rmse"]
-    grid_main = np.linspace(0.0, 1.0, 21)
-    grid_aux = np.linspace(0.0, 0.6, 13)
+    grid_main = np.linspace(0.0, 1.0, 26)
+    grid_aux = np.linspace(0.0, 0.6, 11)
+    grid_wd = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
     for wm in grid_main:
         for wpf in grid_main:
             for wf in grid_aux:
-                for wd in [0.0, 0.05, 0.10, 0.15, 0.20, 0.30]:
+                for wd in grid_wd:
                     raw = wm * model_d + wpf * pf_d + wf * form_d + wd * dense_d
                     bias = float(np.nanmedian(true - (last + raw)))
                     pred = last + raw + bias
@@ -870,7 +871,7 @@ def robust_polyfit(s: np.ndarray, y: np.ndarray, degree: int = 4) -> np.ndarray:
     return fitted
 
 
-def projection_smooth(sub: pd.DataFrame, data_dir: Path, blend: float = 0.65, degree: int = 4) -> Tuple[pd.DataFrame, int]:
+def projection_smooth(sub: pd.DataFrame, data_dir: Path, blend: float = 0.68, degree: int = 4) -> Tuple[pd.DataFrame, int]:
     out = sub.copy()
     parts = out["id"].astype(str).str.rsplit("_", n=1, expand=True)
     out["well_id"] = parts[0]
@@ -925,7 +926,7 @@ def contact_tvt_from_train(hw_tr: pd.DataFrame, tw_tr: pd.DataFrame, formation: 
     return (phys + offset.mean()).to_numpy(dtype=float)
 
 
-def guarded_overlap_override(sub: pd.DataFrame, data_dir: Path, threshold_rmse: float = 1.0) -> Tuple[pd.DataFrame, Dict[str, int]]:
+def guarded_overlap_override(sub: pd.DataFrame, data_dir: Path, threshold_rmse: float = 1.15) -> Tuple[pd.DataFrame, Dict[str, int]]:
     out = sub.copy()
     parts = out["id"].astype(str).str.rsplit("_", n=1, expand=True)
     out["well_id"] = parts[0]
@@ -988,13 +989,13 @@ def make_submission(
     data_dir: Path,
     output_path: Path,
     model_dir: Path,
-    max_train_rows: int = 900_000,
-    calibration_rows: int = 260_000,
-    validation_fraction: float = 0.18,
-    pf_train_particles: int = 96,
-    pf_train_seeds: int = 2,
-    pf_test_particles: int = 192,
-    pf_test_seeds: int = 4,
+    max_train_rows: int = 1_000_000,
+    calibration_rows: int = 280_000,
+    validation_fraction: float = 0.16,
+    pf_train_particles: int = 128,
+    pf_train_seeds: int = 3,
+    pf_test_particles: int = 256,
+    pf_test_seeds: int = 5,
     max_train_wells: int | None = None,
 ) -> pd.DataFrame:
     t0 = time.time()
@@ -1075,13 +1076,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--output", default="submission.csv")
     parser.add_argument("--model-dir", default="models")
-    parser.add_argument("--max-train-rows", type=int, default=900_000)
-    parser.add_argument("--calibration-rows", type=int, default=260_000)
-    parser.add_argument("--validation-fraction", type=float, default=0.18)
-    parser.add_argument("--pf-train-particles", type=int, default=96)
-    parser.add_argument("--pf-train-seeds", type=int, default=2)
-    parser.add_argument("--pf-test-particles", type=int, default=192)
-    parser.add_argument("--pf-test-seeds", type=int, default=4)
+    parser.add_argument("--max-train-rows", type=int, default=1_000_000)
+    parser.add_argument("--calibration-rows", type=int, default=280_000)
+    parser.add_argument("--validation-fraction", type=float, default=0.16)
+    parser.add_argument("--pf-train-particles", type=int, default=128)
+    parser.add_argument("--pf-train-seeds", type=int, default=3)
+    parser.add_argument("--pf-test-particles", type=int, default=256)
+    parser.add_argument("--pf-test-seeds", type=int, default=5)
     parser.add_argument("--max-train-wells", type=int, default=None)
     args, unknown = parser.parse_known_args()
     if unknown:
